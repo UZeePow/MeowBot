@@ -12,135 +12,7 @@ const bot = new Discord.Client();
 // stream constants
 const streamOptions = { seek: 0, volume: 1 };
 const broadcast = bot.createVoiceBroadcast();
-// search on youtube constants
-var fs = require('fs');
-var readline = require('readline');
-var {google} = require('googleapis');
-var OAuth2 = google.auth.OAuth2;
-
-// If modifying these scopes, delete your previously saved credentials
-// at ~/.credentials/youtube-nodejs-quickstart.json
-var SCOPES = ['https://www.googleapis.com/auth/youtube.readonly'];
-var TOKEN_DIR = (process.env.HOME || process.env.HOMEPATH ||
-    process.env.USERPROFILE) + '/.credentials/';
-var TOKEN_PATH = TOKEN_DIR + 'youtube-nodejs-quickstart.json';
-
-// Load client secrets from a local file.
-fs.readFile('client_secret.json', function processClientSecrets(err, content) {
-  if (err) {
-    console.log('Error loading client secret file: ' + err);
-    return;
-  }
-  // Authorize a client with the loaded credentials, then call the YouTube API.
-  authorize(JSON.parse(content), getChannel);
-});
-
-/**
- * Create an OAuth2 client with the given credentials, and then execute the
- * given callback function.
- *
- * @param {Object} credentials The authorization client credentials.
- * @param {function} callback The callback to call with the authorized client.
- */
-function authorize(credentials, callback) {
-  var clientSecret = credentials.installed.client_secret;
-  var clientId = credentials.installed.client_id;
-  var redirectUrl = credentials.installed.redirect_uris[0];
-  var oauth2Client = new OAuth2(clientId, clientSecret, redirectUrl);
-
-  // Check if we have previously stored a token.
-  fs.readFile(TOKEN_PATH, function(err, token) {
-    if (err) {
-      getNewToken(oauth2Client, callback);
-    } else {
-      oauth2Client.credentials = JSON.parse(token);
-      callback(oauth2Client);
-    }
-  });
-}
-
-/**
- * Get and store new token after prompting for user authorization, and then
- * execute the given callback with the authorized OAuth2 client.
- *
- * @param {google.auth.OAuth2} oauth2Client The OAuth2 client to get token for.
- * @param {getEventsCallback} callback The callback to call with the authorized
- *     client.
- */
-function getNewToken(oauth2Client, callback) {
-  var authUrl = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: SCOPES
-  });
-  console.log('Authorize this app by visiting this url: ', authUrl);
-  var rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  rl.question('Enter the code from that page here: ', function(code) {
-    rl.close();
-    oauth2Client.getToken(code, function(err, token) {
-      if (err) {
-        console.log('Error while trying to retrieve access token', err);
-        return;
-      }
-      oauth2Client.credentials = token;
-      storeToken(token);
-      callback(oauth2Client);
-    });
-  });
-}
-
-/**
- * Store token to disk be used in later program executions.
- *
- * @param {Object} token The token to store to disk.
- */
-function storeToken(token) {
-  try {
-    fs.mkdirSync(TOKEN_DIR);
-  } catch (err) {
-    if (err.code != 'EEXIST') {
-      throw err;
-    }
-  }
-  fs.writeFile(TOKEN_PATH, JSON.stringify(token), (err) => {
-    if (err) throw err;
-    console.log('Token stored to ' + TOKEN_PATH);
-  });
-  console.log('Token stored to ' + TOKEN_PATH);
-}
-
-/**
- * Lists the names and IDs of up to 10 files.
- *
- * @param {google.auth.OAuth2} auth An authorized OAuth2 client.
- */
-function getChannel(auth) {
-  var service = google.youtube('v3');
-  service.channels.list({
-    auth: auth,
-    part: 'snippet,contentDetails,statistics',
-    forUsername: 'GoogleDevelopers'
-  }, function(err, response) {
-    if (err) {
-      console.log('The API returned an error: ' + err);
-      return;
-    }
-    var channels = response.data.items;
-    if (channels.length == 0) {
-      console.log('No channel found.');
-    } else {
-      console.log('This channel\'s ID is %s. Its title is \'%s\', and ' +
-                  'it has %s views.',
-                  channels[0].id,
-                  channels[0].snippet.title,
-                  channels[0].statistics.viewCount);
-    }
-  });
-}
-
-
+const queue = new Map();
 
 // when the client is ready, run this code
 // this event will only trigger one time after logging in
@@ -151,11 +23,13 @@ bot.once('ready', () => {
 // login to Discord with your app's token
 bot.login(auth.token);
 
+// Scan the message
 bot.on('message', message => {
 	// Checks if the message was a command to the bot
 	if(message.content.substring(0,1) == auth.prefix) {
 		var args = message.content.substring(1).split(' ');
 		var cmd = args[0];
+		const playQueue = queue.get(message.guild.id);
 		switch(cmd) {
 			// ~cat
 			case 'cat':
@@ -209,7 +83,9 @@ bot.on('message', message => {
 				} else if(!message.member.voiceChannel) {
 					message.channel.send('You must be in a voice channel ΦΑΦ');
 				} else {
-					message.member.voiceChannel.join()
+					execute(message, playQueue, args[1]);
+					
+					/*message.member.voiceChannel.join()
 						.then(connection => {
 							console.log('Connected');
 							message.delete();
@@ -218,7 +94,7 @@ bot.on('message', message => {
 							broadcast.playStream(stream);
 							const dispatcher = connection.playBroadcast(broadcast);
 						})
-						.catch(console.error);
+						.catch(console.error);*/
 				}
 			break;
 			// ~roll [count]d(num)[+modifiers+...]
@@ -259,6 +135,23 @@ bot.on('message', message => {
 					}
 				}
 			break;
+			// ~skip
+			case 'skip':
+				if(!message.member.voiceChannel || !playQueue) {
+					message.channel.send('Skip what? ΦΑΦ');
+				} else {
+					playQueue.connection.dispatcher.end();
+				}
+			break;
+			// ~stop
+			case 'stop':
+				if(!message.member.voiceChannel) {
+					message.channel.send('Stop what? ΦΑΦ');
+				} else {
+					playQueue.songs = [];
+					playQueue.connection.dispatcher.end();
+				}
+			break;
 		}
 	}
 	// Checks if the message is mentioning the bot
@@ -274,48 +167,69 @@ bot.on('end', () => {
 	console.log('send');
 	bot.voiceChannel.leave();
 });
-/*var Discord = require('discord.io');
-var logger = require('winston');
-var auth = require('./auth.json');
-// Configure logger settings
-logger.remove(logger.transports.Console);
-logger.add(new logger.transports.Console, {
-    colorize: true
-});
-logger.level = 'debug';
-// Initialize Discord Bot
-var bot = new Discord.Client({
-   token: auth.token,
-   autorun: true
-});
-bot.on('ready', function (evt) {
-    logger.info('Connected');
-    logger.info('Logged in as: ');
-    logger.info(bot.username + ' - (' + bot.id + ')');
-});
-bot.on('message', function (user, userID, channelID, message, evt) {
-    // Our bot needs to know if it will execute a command
-    // It will listen for messages that will start with `~`
-    if (message.substring(0, 1) == '~') {
-        var args = message.substring(1).split(' ');
-        var cmd = args[0];
-       
-        args = args.splice(1);
-        switch(cmd) {
-            // ~ping
-            case 'ping':
-                bot.sendMessage({
-                    to: channelID,
-                    message: 'Pong!'
-                });
-            break;
-			// ~help
-			case 'help':
-				bot.sendMessage({
-					to: userID,
-					message: 'Testing'
-				});
-			break;
-         }
-     }
-});*/
+
+async function execute(message, playQueue, searchTerm) {
+	const songInfo = await ytdl.getInfo(searchTerm);
+	const song = {
+		title: songInfo.title,
+		url: songInfo.video_url,
+	};
+					
+	// Checks if the serverQueue is already defined
+	if(!playQueue) {
+		// If the queue is nonexistent, create it
+		const newQueue = {
+			textChannel: message.channel,
+			voiceChannel: message.member.voiceChannel,
+			connection: null,
+			songs: [],
+			volume: 1,
+			playing: true,
+		};
+		// Set the queue
+		queue.set(message.guild.id, newQueue);
+		// Push the song into the array
+		newQueue.songs.push(song);
+		message.channel.send('```\nAdded ' + song.title + ' to the queue ^ω^\n```');
+		try {
+			// Join the channel and set the connection to the current connection
+			var connection = await message.member.voiceChannel.join();
+			newQueue.connection = connection;
+			// Play the songs
+			play(message.guild, newQueue.songs[0], message.channel);
+		} catch (err) {
+			console.log(err);
+			queue.delete(message.guild.id);
+		}
+	} else {
+		playQueue.songs.push(song);
+		message.channel.send('```\nAdded ' + song.title + ' to the queue ^ω^\n```');
+	}
+}
+
+/**
+ * Plays a song that's passed into the parameter
+ *
+ * @param guild - the guild that the bot's playing for
+ * @param song - the song that's going to be played
+ * @param channel - the channel that the messages are sent to
+ */
+ function play(guild, song, channel) {
+	 const playQueue = queue.get(guild.id);
+	 if(!song) {
+		 playQueue.voiceChannel.leave();
+		 queue.delete(guild.id);
+		 return;
+	 }
+	 
+	 const stream = playQueue.connection.playStream(ytdl(song.url))
+		.on('end', () => {
+			channel.send(playQueue.songs[0].title + ' has ended ^ω^');
+			playQueue.songs.shift();
+			play(guild, playQueue.songs[0], channel);
+		})
+		.on('error', error => {
+			console.error(error);
+		});
+	stream.setVolumeLogarithmic(playQueue.volume);
+ }
