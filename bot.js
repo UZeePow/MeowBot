@@ -14,6 +14,9 @@ const streamOptions = { seek: 0, volume: 1 };
 const broadcast = bot.createVoiceBroadcast();
 const queue = new Map();
 
+// other constants
+const msgLimit = 2000;
+
 // when the client is ready, run this code
 // this event will only trigger one time after logging in
 bot.once('ready', () => {
@@ -131,7 +134,11 @@ bot.on('message', message => {
 							numbers = numbers + ' + ' + addExtra[i].toString();
 							sum += parseInt(addExtra[i]);
 						}
-						message.channel.send(numbers + ' = ' + sum);
+						if(numbers.length < msgLimit) {
+							message.channel.send(numbers + ' = ' + sum);
+						} else {
+							message.channel.send(' = ' + sum);
+						}
 					}
 				}
 			break;
